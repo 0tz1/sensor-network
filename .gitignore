@@ -1,0 +1,28 @@
+# Ignore node_modules (standard for Node.js projects)
+node_modules/
+
+# Ignore Mosquitto config and runtime files (if generated)
+mosquitto/
+
+# Ignore tmux temp files
+tmux/
+
+# Ignore Grafana plugin repo if you don't want to track it inside
+grafana-windrose/
+
+# Ignore Arduino build files (if you have Arduino stuff)
+Arduino/build/
+Arduino/*.elf
+Arduino/*.bin
+Arduino/*.hex
+
+# Ignore temp/backup files
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+
+# Optional: if you have local environment or secret configs
+.env
+*.local

@@ -1,0 +1,43 @@
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
+      - DOCKER_INFLUXDB_INIT_ORG=my-org
+      - DOCKER_INFLUXDB_INIT_BUCKET=sensors
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=EILx85V6pHo7_YnuiW90DJi7q4Yd7L3EVujJQ_r8ECI34Bsqx-ENeHQp4hip9Yv4nE9zhXujsBiV7By_dAXsJQ==
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - /Users/ceylan/iot_dashboard/grafana-windrose:/var/lib/grafana/plugins/grafana-windrose
+    environment:
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=spectraphilic-windrose-panel
+
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    container_name: mqtt
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+volumes:
+  influxdb-data:
+    external: true
+    name: iot_dashboard_influxdb_data
+
+  grafana-data:
+    external: true
+    name: iot_dashboard_grafana_data
