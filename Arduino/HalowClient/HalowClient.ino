@@ -5,17 +5,12 @@ const int node_id = 1;
 TaskHandle_t mqttTaskHandle;
 TaskHandle_t sensorPublishTaskHandle;
 
-size_t ota_total_size = 0;
-size_t ota_received_size = 0;
-bool ota_in_progress = false;
-bool ota_reboot_pending = false;
+// --- Battery ADC Pin ---
+#define BATTERY_ADC_PIN 1
+// --- Charging Status Pin (connect CHG pin here) ---
+#define CHARGING_STATUS_PIN 2
 
-struct SensorData {
-    float temperature, humidity, co2, pm25, uv, co, wind_speed, wind_direction;
-    int raindrop, wifi_strength;
-    String rtc;
-};
-
+// ======= RTC Init =======
 void initRTC() {
     struct tm t = { 0 };
     t.tm_year = 2025 - 1900;
@@ -37,6 +32,33 @@ String getRTC() {
     return String(buffer);
 }
 
+// ======= Read Smoothed Battery Voltage =======
+float readBatteryVoltageSmoothed() {
+    const int samples = 10;
+    int total = 0;
+    for (int i = 0; i < samples; i++) {
+        total += analogRead(BATTERY_ADC_PIN);
+        delay(5); // Small delay for better averaging
+    }
+    float avg_adc = (float)total / samples;
+    float voltage = (avg_adc / 4095.0) * 3.3;
+    return voltage * 2.0;  // Compensate for voltage divider
+}
+
+// ======= Battery Percentage Calculation =======
+int batteryPercentage(float voltage) {
+    if (voltage >= 4.2) return 100;
+    if (voltage <= 3.3) return 0;
+    return (int)((voltage - 3.3) * 100.0 / (4.2 - 3.3));
+}
+
+// ======= Charging Status Detection =======
+int getBatteryStatus() {
+    int stat = digitalRead(CHARGING_STATUS_PIN);
+    return (stat == LOW) ? 1 : 0;  // LOW = charging
+}
+
+// ======= Get Sensor Data =======
 SensorData getSensorData() {
     static float temp = 25.0, hum = 50.0, wind_speed = 4.0, wind_dir = 180.0;
     temp += random(-10, 11) * 0.1;
@@ -63,11 +85,15 @@ SensorData getSensorData() {
     d.raindrop = analogRead(34);
     d.wifi_strength = HaLow.RSSI();
     d.rtc = getRTC();
+    float batt_voltage = readBatteryVoltageSmoothed(); // Use smoothed voltage
+    d.battery_percent = batteryPercentage(batt_voltage);
+    d.battery_status = getBatteryStatus();
     return d;
 }
 
+// ======= Generate JSON =======
 String generateJSON(SensorData d) {
-    StaticJsonDocument<384> doc;
+    StaticJsonDocument<512> doc;
     doc["node_id"] = node_id;
     doc["temperature"] = d.temperature;
     doc["humidity"] = d.humidity;
@@ -80,6 +106,8 @@ String generateJSON(SensorData d) {
     doc["raindrop"] = d.raindrop;
     doc["wifi"] = d.wifi_strength;
     doc["rtc"] = d.rtc;
+    doc["battery_percent"] = d.battery_percent;
+    doc["battery_status"] = d.battery_status;
     String json;
     serializeJson(doc, json);
     return json;
@@ -201,12 +229,15 @@ void initHaLow() {
     Serial.println("🌍 IP: " + HaLow.localIP().toString());
 }
 
-// ======= Setup =======
+// ======= Arduino Setup =======
 void setup() {
     Serial.begin(115200);
     randomSeed(micros());
     initHaLow();
     initRTC();
+
+    // pinMode(CHARGING_STATUS_PIN, INPUT_PULLUP); //CHG pin
+
     client.setServer(mqtt_server, mqtt_port);
     client.setCallback(mqttCallback);
 

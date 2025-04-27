@@ -7,7 +7,7 @@ const BROKER       = 'mqtt://192.168.1.137';
 const TOPIC_START  = 'sensor/ota/start';
 const TOPIC_CHUNK  = 'sensor/ota/chunk';
 const TOPIC_DONE   = 'sensor/ota/done';
-const FILE_PATH    = '/Users/ceylan/Library/Caches/arduino/sketches/0B4DB2684DF8703288033F5FEB68B44C/HalowClient.ino.bin';
+const FILE_PATH    = '/Users/ceylan/Library/Caches/arduino/sketches/9216BF5B202591106F2E159A1E328B7E/HalowClient.ino.bin';
 const CHUNK_SIZE   = 128;
 const CHUNK_DELAY  = 10; // ms
 

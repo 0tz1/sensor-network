@@ -22,10 +22,11 @@ mqttClient.on('message', async (topic, message) => {
 
     // Convert JSON to InfluxDB Line Protocol
     const line = `environment,node_id=${data.node_id} ` +
-      `temperature=${data.temperature},humidity=${data.humidity},` +
-      `co2=${data.co2},pm25=${data.pm25},uv=${data.uv},wifi=${data.wifi},` +
-      `wind_speed=${data.wind_speed},wind_direction=${data.wind_direction},` +
-      `co=${data.co},raindrop=${data.raindrop}`;
+        `temperature=${data.temperature},humidity=${data.humidity},` +
+        `co2=${data.co2},pm25=${data.pm25},uv=${data.uv},wifi=${data.wifi},` +
+        `wind_speed=${data.wind_speed},wind_direction=${data.wind_direction},` +
+        `co=${data.co},raindrop=${data.raindrop},` +
+        `battery_percent=${data.battery_percent},battery_status=${data.battery_status}`;
 
     // Send to InfluxDB
     await axios.post(INFLUX_URL, line, {
