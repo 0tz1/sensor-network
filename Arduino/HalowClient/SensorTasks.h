@@ -9,6 +9,8 @@
 #include <Update.h>
 #include <WebServer.h>
 #include <PubSubClient.h>
+#include <SensirionI2cScd4x.h>
+#include <Adafruit_BME680.h>
 
 #include <time.h>
 
@@ -38,6 +40,8 @@ struct SensorData {
     float pm25 = 0.0;
     float uv = 0.0;
     float co = 0.0;
+    float pressure = 0.0;
+    float iaq = 0.0;
     float wind_speed = 0.0;
     float wind_direction = 0.0;
     int battery_percent = 0;
@@ -47,7 +51,9 @@ struct SensorData {
 };
 
 enum SensorType {
-    SENSOR_DEVICE_INFO
+    SENSOR_DEVICE_INFO,
+    SENSOR_SCD40,
+    SENSOR_BME680
 };
 
 struct SensorMessage {
@@ -60,10 +66,26 @@ size_t ota_received_size = 0;
 bool ota_in_progress = false;
 bool ota_reboot_pending = false;
 
+// ===== Fusion Weights =====
+#define HUMI_WEIGHT_SCD40   0.8
+#define HUMI_WEIGHT_BME680  0.2
+
+// ===== Dummy Data Constants =====
+#define PM25_DUMMY_VALUE    45
+#define UV_DUMMY_VALUE      5.2
+#define WIND_BASE           3.0
+#define WIND_VARIATION      1.5
+#define RAINDROP_ANALOG_PIN 34
+
 // FreeRTOS task handles
 TaskHandle_t mqttTaskHandle;
 TaskHandle_t deviceInfoTaskHandle;
 TaskHandle_t sensorPublishTaskHandle;
+TaskHandle_t scd40TaskHandle;
+TaskHandle_t bme680TaskHandle;
+
+SensirionI2cScd4x scd4x;
+Adafruit_BME680 bme;
 
 // FreeRTOS queue
 QueueHandle_t sensorQueue;

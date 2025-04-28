@@ -26,7 +26,8 @@ mqttClient.on('message', async (topic, message) => {
         `co2=${data.co2},pm25=${data.pm25},uv=${data.uv},wifi=${data.wifi},` +
         `wind_speed=${data.wind_speed},wind_direction=${data.wind_direction},` +
         `co=${data.co},raindrop=${data.raindrop},` +
-        `battery_percent=${data.battery_percent},battery_status=${data.battery_status}`;
+        `battery_percent=${data.battery_percent},battery_status=${data.battery_status},` +
+        `pressure=${data.pressure},iaq=${data.iaq}`;
 
     // Send to InfluxDB
     await axios.post(INFLUX_URL, line, {
