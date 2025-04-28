@@ -32,12 +32,27 @@ const char* mqtt_topic_ota_chunk = "sensor/ota/chunk";
 const char* mqtt_topic_ota_done  = "sensor/ota/done";
 
 struct SensorData {
-    float temperature, humidity, co2, pm25, uv, co, wind_speed, wind_direction;
-    int battery_percent;
-    int battery_status;
-    int battery_voltage;
-    int raindrop, wifi_strength;
-    String rtc;
+    float temperature = 0.0;
+    float humidity = 0.0;
+    float co2 = 0.0;
+    float pm25 = 0.0;
+    float uv = 0.0;
+    float co = 0.0;
+    float wind_speed = 0.0;
+    float wind_direction = 0.0;
+    int battery_percent = 0;
+    int battery_status = 0;
+    int raindrop = 0;
+    int wifi_strength = 0;
+};
+
+enum SensorType {
+    SENSOR_DEVICE_INFO
+};
+
+struct SensorMessage {
+    SensorType type;
+    SensorData data;
 };
 
 size_t ota_total_size = 0;
@@ -45,7 +60,12 @@ size_t ota_received_size = 0;
 bool ota_in_progress = false;
 bool ota_reboot_pending = false;
 
-TaskHandle_t sensorTaskHandle;
+// FreeRTOS task handles
+TaskHandle_t mqttTaskHandle;
+TaskHandle_t deviceInfoTaskHandle;
+TaskHandle_t sensorPublishTaskHandle;
 
+// FreeRTOS queue
+QueueHandle_t sensorQueue;
 
-#endif
+#endif // SENSORTASKS_H

@@ -2,9 +2,6 @@
 
 const int node_id = 1;
 
-TaskHandle_t mqttTaskHandle;
-TaskHandle_t sensorPublishTaskHandle;
-
 // --- Battery ADC Pin ---
 #define BATTERY_ADC_PIN 1
 // --- Charging Status Pin (connect CHG pin here) ---
@@ -32,85 +29,45 @@ String getRTC() {
     return String(buffer);
 }
 
-// ======= Read Smoothed Battery Voltage =======
+// ======= Battery =======
 float readBatteryVoltageSmoothed() {
     const int samples = 10;
     int total = 0;
     for (int i = 0; i < samples; i++) {
         total += analogRead(BATTERY_ADC_PIN);
-        delay(5); // Small delay for better averaging
+        delay(5);
     }
     float avg_adc = (float)total / samples;
     float voltage = (avg_adc / 4095.0) * 3.3;
-    return voltage * 2.0;  // Compensate for voltage divider
+    return voltage * 2.0;
 }
 
-// ======= Battery Percentage Calculation =======
 int batteryPercentage(float voltage) {
     if (voltage >= 4.2) return 100;
     if (voltage <= 3.3) return 0;
     return (int)((voltage - 3.3) * 100.0 / (4.2 - 3.3));
 }
 
-// ======= Charging Status Detection =======
 int getBatteryStatus() {
     int stat = digitalRead(CHARGING_STATUS_PIN);
-    return (stat == LOW) ? 1 : 0;  // LOW = charging
+    return (stat == LOW) ? 1 : 0;
 }
 
-// ======= Get Sensor Data =======
-SensorData getSensorData() {
-    static float temp = 25.0, hum = 50.0, wind_speed = 4.0, wind_dir = 180.0;
-    temp += random(-10, 11) * 0.1;
-    hum += random(-5, 6) * 0.1;
-    temp = constrain(temp, 15.0, 40.0);
-    hum = constrain(hum, 20.0, 90.0);
-    float base = 3.0 + sin(millis() / 60000.0) * 1.5;
-    float gust = random(0, 10) > 8 ? random(8, 14) : 0;
-    wind_speed = constrain(base + random(-10, 11) * 0.1 + gust, 0, 15);
-    wind_dir += random(-5, 6);
-    if (random(0, 100) < 5) wind_dir += random(-30, 31);
-    while (wind_dir < 0) wind_dir += 360;
-    while (wind_dir >= 360) wind_dir -= 360;
+// ======= Device Info Task =======
+void deviceInfoTask(void* pvParameters) {
+    while (true) {
+        SensorMessage msg;
+        msg.type = SENSOR_DEVICE_INFO;
 
-    SensorData d;
-    d.temperature = temp;
-    d.humidity = hum;
-    d.co2 = 543;
-    d.pm25 = 45;
-    d.uv = 5.2;
-    d.co = random(1, 11);
-    d.wind_speed = wind_speed;
-    d.wind_direction = wind_dir;
-    d.raindrop = analogRead(34);
-    d.wifi_strength = HaLow.RSSI();
-    d.rtc = getRTC();
-    float batt_voltage = readBatteryVoltageSmoothed(); // Use smoothed voltage
-    d.battery_percent = batteryPercentage(batt_voltage);
-    d.battery_status = getBatteryStatus();
-    return d;
-}
+        float batt_voltage = readBatteryVoltageSmoothed();
+        msg.data.battery_percent = batteryPercentage(batt_voltage);
+        msg.data.battery_status = getBatteryStatus();
+        msg.data.wifi_strength = HaLow.RSSI();
 
-// ======= Generate JSON =======
-String generateJSON(SensorData d) {
-    StaticJsonDocument<512> doc;
-    doc["node_id"] = node_id;
-    doc["temperature"] = d.temperature;
-    doc["humidity"] = d.humidity;
-    doc["co2"] = d.co2;
-    doc["pm25"] = d.pm25;
-    doc["uv"] = d.uv;
-    doc["co"] = d.co;
-    doc["wind_speed"] = d.wind_speed;
-    doc["wind_direction"] = d.wind_direction;
-    doc["raindrop"] = d.raindrop;
-    doc["wifi"] = d.wifi_strength;
-    doc["rtc"] = d.rtc;
-    doc["battery_percent"] = d.battery_percent;
-    doc["battery_status"] = d.battery_status;
-    String json;
-    serializeJson(doc, json);
-    return json;
+        xQueueSend(sensorQueue, &msg, portMAX_DELAY);
+
+        vTaskDelay(pdMS_TO_TICKS(2000)); // Every 2 seconds
+    }
 }
 
 // ======= MQTT Callback =======
@@ -204,12 +161,64 @@ void mqttLoop(void* pvParameters) {
 
 // ======= Sensor Publishing Task =======
 void sensorPublishTask(void* pvParameters) {
+    SensorData combinedData;
+    static float temp = 25.0, hum = 50.0;
+    static float wind_speed = 4.0, wind_dir = 180.0;
+
     while (true) {
-        if (!ota_in_progress && client.connected()) {
-            SensorData data = getSensorData();
-            String json = generateJSON(data);
+        SensorMessage msg;
+        while (xQueueReceive(sensorQueue, &msg, 0)) {
+            if (msg.type == SENSOR_DEVICE_INFO) {
+                combinedData.battery_percent = msg.data.battery_percent;
+                combinedData.battery_status = msg.data.battery_status;
+                combinedData.wifi_strength = msg.data.wifi_strength;
+            }
+        }
+
+        // Update dummy values
+        temp += random(-10, 11) * 0.1;
+        hum += random(-5, 6) * 0.1;
+        temp = constrain(temp, 15.0, 40.0);
+        hum = constrain(hum, 20.0, 90.0);
+
+        float base = 3.0 + sin(millis() / 60000.0) * 1.5;
+        float gust = random(0, 10) > 8 ? random(8, 14) : 0;
+        wind_speed = constrain(base + random(-10, 11) * 0.1 + gust, 0, 15);
+        wind_dir += random(-5, 6);
+        while (wind_dir < 0) wind_dir += 360;
+        while (wind_dir >= 360) wind_dir -= 360;
+
+        combinedData.temperature = temp;
+        combinedData.humidity = hum;
+        combinedData.co2 = 543;
+        combinedData.pm25 = 45;
+        combinedData.uv = 5.2;
+        combinedData.co = random(1, 11);
+        combinedData.wind_speed = wind_speed;
+        combinedData.wind_direction = wind_dir;
+        combinedData.raindrop = analogRead(34);
+
+        // Build JSON and publish
+        StaticJsonDocument<512> doc;
+        doc["node_id"] = node_id;
+        doc["temperature"] = combinedData.temperature;
+        doc["humidity"] = combinedData.humidity;
+        doc["co2"] = combinedData.co2;
+        doc["pm25"] = combinedData.pm25;
+        doc["uv"] = combinedData.uv;
+        doc["co"] = combinedData.co;
+        doc["wind_speed"] = combinedData.wind_speed;
+        doc["wind_direction"] = combinedData.wind_direction;
+        doc["raindrop"] = combinedData.raindrop;
+        doc["wifi"] = combinedData.wifi_strength;
+        doc["battery_percent"] = combinedData.battery_percent;
+        doc["battery_status"] = combinedData.battery_status;
+
+        String json;
+        serializeJson(doc, json);
+        if (client.connected()) {
             client.publish(mqtt_topic_data, json.c_str());
-            Serial.println("📡 Published to MQTT: " + json);
+            Serial.println("✅ Packet Sent!");
         }
 
         vTaskDelay(pdMS_TO_TICKS(STATUS_INTERVAL));
@@ -236,12 +245,13 @@ void setup() {
     initHaLow();
     initRTC();
 
-    // pinMode(CHARGING_STATUS_PIN, INPUT_PULLUP); //CHG pin
-
     client.setServer(mqtt_server, mqtt_port);
     client.setCallback(mqttCallback);
 
+    sensorQueue = xQueueCreate(10, sizeof(SensorMessage)); // Create queue
+
     xTaskCreatePinnedToCore(mqttLoop, "MQTTTask", 8192, NULL, 1, &mqttTaskHandle, 1);
+    xTaskCreatePinnedToCore(deviceInfoTask, "DeviceInfoTask", 4096, NULL, 1, &deviceInfoTaskHandle, 0);
     xTaskCreatePinnedToCore(sensorPublishTask, "SensorPublishTask", 4096, NULL, 1, &sensorPublishTaskHandle, 0);
 }
 
