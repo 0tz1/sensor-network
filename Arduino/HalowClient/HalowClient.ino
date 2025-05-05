@@ -4,6 +4,7 @@ const int node_id = 1;
 
 // --- Battery ADC Pin ---
 #define BATTERY_ADC_PIN 1
+
 // --- Charging Status Pin (connect CHG pin here) ---
 #define CHARGING_STATUS_PIN 15
 
@@ -11,11 +12,11 @@ const int node_id = 1;
 void initRTC() {
     struct tm t = { 0 };
     t.tm_year = 2025 - 1900;
-    t.tm_mon = 3 - 1;
+    t.tm_mon  = 3  - 1;
     t.tm_mday = 26;
     t.tm_hour = 14;
-    t.tm_min = 30;
-    t.tm_sec = 0;
+    t.tm_min  = 30;
+    t.tm_sec  = 0;
     time_t now = mktime(&t);
     struct timeval now_val = { .tv_sec = now };
     settimeofday(&now_val, NULL);
@@ -24,41 +25,37 @@ void initRTC() {
 // ===== Battery Functions =====
 float readBatteryVoltageSmoothed() {
     const int samples = 10;
-    int total = 0;
+    long total = 0;
     for (int i = 0; i < samples; i++) {
         total += analogRead(BATTERY_ADC_PIN);
         delay(5);
     }
-    float avg_adc = (float)total / samples;
-    float voltage = (avg_adc / 4095.0) * 3.3;
-    return voltage * 2.0;
+    float avg = float(total) / samples;
+    float v   = (avg / 4095.0f) * 3.3f;
+    return v * 2.0f;  // voltage divider factor
 }
 
 int batteryPercentage(float voltage) {
-    if (voltage >= 4.2) return 100;
-    if (voltage <= 3.3) return 0;
-    return (int)((voltage - 3.3) * 100.0 / (4.2 - 3.3));
+    if (voltage >= 4.2f) return 100;
+    if (voltage <= 3.3f) return   0;
+    return int((voltage - 3.3f) * 100.0f / (4.2f - 3.3f));
 }
 
 int getBatteryStatus() {
-    int stat = digitalRead(CHARGING_STATUS_PIN);
-    return (stat == LOW) ? 1 : 0;
+    return (digitalRead(CHARGING_STATUS_PIN) == LOW) ? 1 : 0;
 }
 
 // ===== Device Info Task =====
 void deviceInfoTask(void* pvParameters) {
     while (true) {
         SensorMessage msg;
-        msg.type = SENSOR_DEVICE_INFO;
-
-        float batt_voltage = readBatteryVoltageSmoothed();
-        msg.data.battery_percent = batteryPercentage(batt_voltage);
-        msg.data.battery_status = getBatteryStatus();
-        msg.data.wifi_strength = HaLow.RSSI();
-
+        msg.type                 = SENSOR_DEVICE_INFO;
+        float v                  = readBatteryVoltageSmoothed();
+        msg.data.battery_percent = batteryPercentage(v);
+        msg.data.battery_status  = getBatteryStatus();
+        msg.data.wifi_strength   = HaLow.RSSI();
         xQueueSend(sensorQueue, &msg, portMAX_DELAY);
-
-        vTaskDelay(pdMS_TO_TICKS(2000)); // Every 2 seconds
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
 
@@ -67,46 +64,43 @@ void scd40Task(void* pvParameters) {
     uint16_t co2;
     float temperature, humidity;
     while (true) {
-        int16_t error = scd4x.readMeasurement(co2, temperature, humidity);
-        if (error == 0) {
+        if (scd4x.readMeasurement(co2, temperature, humidity) == 0) {
             SensorMessage msg;
-            msg.type = SENSOR_SCD40;
-            msg.data.co2 = (float)co2;
+            msg.type             = SENSOR_SCD40;
+            msg.data.co2         = float(co2);
             msg.data.temperature = temperature;
-            msg.data.humidity = humidity;
+            msg.data.humidity    = humidity;
             xQueueSend(sensorQueue, &msg, portMAX_DELAY);
         }
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
 
+// ===== BME680 Sensor Task =====
 void bme680Task(void* pvParameters) {
     while (true) {
         if (!bme.performReading()) {
             Serial.println("❌ BME680 reading failed");
         } else {
             SensorMessage msg;
-            msg.type = SENSOR_BME680;
-            msg.data.pressure = bme.pressure / 100.0; // hPa
-            // Simple IAQ approximation
-            float gas = bme.gas_resistance / 1000.0; // kOhm
-            if (gas > 50) gas = 50;
-            float iaq = (1.0 - (gas / 50.0)) * 500.0; // Map from 0-50 kOhm to 0-500 IAQ
-            msg.data.iaq = iaq;
+            msg.type              = SENSOR_BME680;
+            msg.data.pressure     = bme.pressure / 100.0f;   // hPa
+            float gas             = bme.gas_resistance / 1000.0f; // kΩ
+            if (gas > 50.0f) gas = 50.0f;
+            msg.data.iaq          = (1.0f - (gas / 50.0f)) * 500.0f;
             xQueueSend(sensorQueue, &msg, portMAX_DELAY);
         }
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
 
-// ===== MQTT Functions =====
+// ===== MQTT Callback & Reconnect =====
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (strcmp(topic, mqtt_topic_ota_start) == 0) {
-        ota_total_size = atoi((char*)payload);
+        ota_total_size   = atoi((char*)payload);
         ota_received_size = 0;
-        ota_in_progress = true;
+        ota_in_progress  = true;
         ota_reboot_pending = false;
-
         if (!Update.begin(ota_total_size)) {
             Serial.println("❌ OTA begin failed.");
             ota_in_progress = false;
@@ -115,15 +109,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         }
         return;
     }
-
     if (strcmp(topic, mqtt_topic_ota_chunk) == 0 && ota_in_progress) {
         size_t written = Update.write(payload, length);
         ota_received_size += written;
-
-        if ((ota_received_size % 20480) < length) {
-            Serial.printf("*");
-        }
-
+        if ((ota_received_size % 20480) < length) Serial.print("*");
         if (written != length) {
             Serial.println("\n❌ Chunk write failed.");
             ota_in_progress = false;
@@ -131,22 +120,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         }
         return;
     }
-
     if (strcmp(topic, mqtt_topic_ota_done) == 0) {
         Serial.println("\n📦 OTA done message received.");
-
         if (!ota_in_progress) {
             Serial.println("⚠️ OTA was not in progress. Ignoring.");
             return;
         }
-
         if (Update.end(true)) {
             Serial.printf("✅ OTA finished: %u bytes written.\n", ota_received_size);
             ota_reboot_pending = true;
         } else {
             Serial.printf("❌ OTA end failed. Error: %s\n", Update.errorString());
         }
-
         ota_in_progress = false;
         return;
     }
@@ -180,97 +165,64 @@ void mqttLoop(void* pvParameters) {
     }
 }
 
-// ===== Sensor Publishing Task =====
-void fuseHumidityOnly(float scd40_humi, float bme680_humi, float& fused_humi) {
-    float humi_diff = fabs(scd40_humi - bme680_humi);
-
-    if (humi_diff <= 5.0f) {
-        fused_humi = (scd40_humi * HUMI_WEIGHT_SCD40) + (bme680_humi * HUMI_WEIGHT_BME680);
-    } else {
-        fused_humi = scd40_humi; // Trust SCD40 more
-    }
-}
-
+// ===== Sensor Publishing Task (no fusion) =====
 void sensorPublishTask(void* pvParameters) {
-    SensorData combinedData;
-    static float wind_speed = 4.0, wind_dir = 180.0;
-
-    float scd40_temp = 0, scd40_humi = 0;
-    float bme680_temp = 0, bme680_humi = 0;
-    bool scd40_ready = false, bme680_ready = false;
+    SensorData combinedData = {};
+    static float wind_speed  = 4.0f, wind_dir = 180.0f;
 
     while (true) {
         SensorMessage msg;
         while (xQueueReceive(sensorQueue, &msg, 0)) {
-            if (msg.type == SENSOR_DEVICE_INFO) {
-                combinedData.battery_percent = msg.data.battery_percent;
-                combinedData.battery_status = msg.data.battery_status;
-                combinedData.wifi_strength = msg.data.wifi_strength;
-            } else if (msg.type == SENSOR_SCD40) {
-                // Only accept valid SCD40 readings
-                if (msg.data.temperature > -50 && msg.data.temperature < 80 &&
-                    msg.data.humidity >= 0 && msg.data.humidity <= 100) {
-                    combinedData.co2 = msg.data.co2;
-                    scd40_temp = msg.data.temperature;
-                    scd40_humi = msg.data.humidity;
-                    scd40_ready = true;
-                }
-            } else if (msg.type == SENSOR_BME680) {
-                // Only accept valid BME680 readings
-                if (msg.data.pressure > 800 && msg.data.pressure < 1200) {
-                    combinedData.pressure = msg.data.pressure;
-                    combinedData.iaq = msg.data.iaq;
-                    bme680_temp = msg.data.temperature;
-                    bme680_humi = msg.data.humidity;
-                    bme680_ready = true;
-                }
+            switch (msg.type) {
+                case SENSOR_DEVICE_INFO:
+                    combinedData.battery_percent = msg.data.battery_percent;
+                    combinedData.battery_status  = msg.data.battery_status;
+                    combinedData.wifi_strength   = msg.data.wifi_strength;
+                    break;
+                case SENSOR_SCD40:
+                    combinedData.co2         = msg.data.co2;
+                    combinedData.temperature = msg.data.temperature;
+                    combinedData.humidity    = msg.data.humidity;
+                    break;
+                case SENSOR_BME680:
+                    combinedData.pressure    = msg.data.pressure;
+                    combinedData.iaq         = msg.data.iaq;
+                    break;
             }
         }
 
-        // Use SCD40 temp directly, fuse humidity if both ready
-        if (scd40_ready && bme680_ready) {
-            combinedData.temperature = scd40_temp;
-            fuseHumidityOnly(scd40_humi, bme680_humi, combinedData.humidity);
-        } else if (scd40_ready) {
-            combinedData.temperature = scd40_temp;
-            combinedData.humidity = scd40_humi;
-        } else if (bme680_ready) {
-            combinedData.temperature = bme680_temp;
-            combinedData.humidity = bme680_humi;
-        }
+        // — Dummy/random values —
+        float base = WIND_BASE + sin(millis() / 60000.0f) * WIND_VARIATION;
+        float gust = (random(0,10) > 8) ? random(8,14) : 0;
+        wind_speed = constrain(base + random(-10,11)*0.1f + gust, 0.0f, 15.0f);
+        wind_dir  += random(-5, 6);
+        if (wind_dir < 0) wind_dir += 360;
+        if (wind_dir >= 360) wind_dir -= 360;
 
-        // Generate dummy/random values
-        float base = WIND_BASE + sin(millis() / 60000.0) * WIND_VARIATION;
-        float gust = random(0, 10) > 8 ? random(8, 14) : 0;
-        wind_speed = constrain(base + random(-10, 11) * 0.1 + gust, 0, 15);
-        wind_dir += random(-5, 6);
-        while (wind_dir < 0) wind_dir += 360;
-        while (wind_dir >= 360) wind_dir -= 360;
-
-        combinedData.pm25 = PM25_DUMMY_VALUE;
-        combinedData.uv = UV_DUMMY_VALUE;
-        combinedData.co = random(1, 11);
-        combinedData.wind_speed = wind_speed;
+        combinedData.pm25           = PM25_DUMMY_VALUE;
+        combinedData.uv             = UV_DUMMY_VALUE;
+        combinedData.co             = random(1, 11);
+        combinedData.wind_speed     = wind_speed;
         combinedData.wind_direction = wind_dir;
-        combinedData.raindrop = analogRead(RAINDROP_ANALOG_PIN);
+        combinedData.raindrop       = analogRead(RAINDROP_ANALOG_PIN);
 
-        // Prepare JSON and send
+        // — Build & publish JSON —
         StaticJsonDocument<512> doc;
-        doc["node_id"] = node_id;
-        doc["temperature"] = combinedData.temperature;
-        doc["humidity"] = combinedData.humidity;
-        doc["co2"] = combinedData.co2;
-        doc["pm25"] = combinedData.pm25;
-        doc["uv"] = combinedData.uv;
-        doc["co"] = combinedData.co;
-        doc["wind_speed"] = combinedData.wind_speed;
-        doc["wind_direction"] = combinedData.wind_direction;
-        doc["raindrop"] = combinedData.raindrop;
-        doc["pressure"] = combinedData.pressure;
-        doc["iaq"] = combinedData.iaq;
-        doc["wifi"] = combinedData.wifi_strength;
+        doc["node_id"]         = node_id;
         doc["battery_percent"] = combinedData.battery_percent;
-        doc["battery_status"] = combinedData.battery_status;
+        doc["battery_status"]  = combinedData.battery_status;
+        doc["wifi"]            = combinedData.wifi_strength;
+        doc["co2"]             = combinedData.co2;
+        doc["temperature"]     = combinedData.temperature;
+        doc["humidity"]        = combinedData.humidity;
+        doc["pressure"]        = combinedData.pressure;
+        doc["iaq"]             = combinedData.iaq;
+        doc["pm25"]            = combinedData.pm25;
+        doc["uv"]              = combinedData.uv;
+        doc["co"]              = combinedData.co;
+        doc["wind_speed"]      = combinedData.wind_speed;
+        doc["wind_direction"]  = combinedData.wind_direction;
+        doc["raindrop"]        = combinedData.raindrop;
 
         String json;
         serializeJson(doc, json);
@@ -280,14 +232,11 @@ void sensorPublishTask(void* pvParameters) {
             Serial.println("✅ Packet Sent!");
         }
 
-        scd40_ready = false;
-        bme680_ready = false;
-
         vTaskDelay(pdMS_TO_TICKS(STATUS_INTERVAL));
     }
 }
 
-// ===== WiFi Init =====
+// ===== Wi-Fi HaLow Init =====
 void initHaLow() {
     Serial.println("🚀 Initializing HaLow...");
     HaLow.init("AU");
@@ -300,7 +249,7 @@ void initHaLow() {
     Serial.println("🌍 IP: " + HaLow.localIP().toString());
 }
 
-// ===== Arduino Setup =====
+// ===== Arduino Setup & Loop =====
 void setup() {
     Serial.begin(115200);
     randomSeed(micros());

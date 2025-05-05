@@ -66,9 +66,6 @@ size_t ota_received_size = 0;
 bool ota_in_progress = false;
 bool ota_reboot_pending = false;
 
-// ===== Fusion Weights =====
-#define HUMI_WEIGHT_SCD40   0.8
-#define HUMI_WEIGHT_BME680  0.2
 
 // ===== Dummy Data Constants =====
 #define PM25_DUMMY_VALUE    45
