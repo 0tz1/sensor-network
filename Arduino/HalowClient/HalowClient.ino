@@ -1,12 +1,7 @@
-#include "SensorTasks.h"
+#include "SensorConfig.h"
+#include "SensorGlobal.h"
 
 const int node_id = 1;
-
-// --- Battery ADC Pin ---
-#define BATTERY_ADC_PIN 1
-
-// --- Charging Status Pin (connect CHG pin here) ---
-#define CHARGING_STATUS_PIN 15
 
 // ======= RTC Init =======
 void initRTC() {
@@ -90,6 +85,17 @@ void bme680Task(void* pvParameters) {
             msg.data.iaq          = (1.0f - (gas / 50.0f)) * 500.0f;
             xQueueSend(sensorQueue, &msg, portMAX_DELAY);
         }
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+
+// ===== MQ Sensor Task =====
+void mqTask(void* pvParameters) {
+    while (true) {
+        SensorMessage msg;
+        msg.type = SENSOR_MQ;
+        msg.data.co = analogRead(MQ_PIN);
+        xQueueSend(sensorQueue, &msg, portMAX_DELAY);
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
@@ -188,10 +194,13 @@ void sensorPublishTask(void* pvParameters) {
                     combinedData.pressure    = msg.data.pressure;
                     combinedData.iaq         = msg.data.iaq;
                     break;
+                case SENSOR_MQ:
+                    combinedData.co          = msg.data.co;
+                    break;
             }
         }
 
-        // — Dummy/random values —
+        // — Dummy/random values for wind, rain, etc. —
         float base = WIND_BASE + sin(millis() / 60000.0f) * WIND_VARIATION;
         float gust = (random(0,10) > 8) ? random(8,14) : 0;
         wind_speed = constrain(base + random(-10,11)*0.1f + gust, 0.0f, 15.0f);
@@ -201,7 +210,6 @@ void sensorPublishTask(void* pvParameters) {
 
         combinedData.pm25           = PM25_DUMMY_VALUE;
         combinedData.uv             = UV_DUMMY_VALUE;
-        combinedData.co             = random(1, 11);
         combinedData.wind_speed     = wind_speed;
         combinedData.wind_direction = wind_dir;
         combinedData.raindrop       = analogRead(RAINDROP_ANALOG_PIN);
@@ -250,11 +258,8 @@ void initHaLow() {
 }
 
 // ===== Arduino Setup & Loop =====
-void setup() {
-    Serial.begin(115200);
-    randomSeed(micros());
-
-    Wire.begin(15, 16);
+void initI2CDevices() {
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     scd4x.begin(Wire, 0x62);
     delay(30);
     scd4x.wakeUp();
@@ -262,29 +267,40 @@ void setup() {
     scd4x.reinit();
     scd4x.startPeriodicMeasurement();
 
-    if (!bme.begin()) {
-        Serial.println("❌ Could not find BME680 sensor!");
-        while (1);
-    }
+    bme.begin();
     bme.setTemperatureOversampling(BME680_OS_8X);
     bme.setHumidityOversampling(BME680_OS_2X);
     bme.setPressureOversampling(BME680_OS_4X);
     bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
     bme.setGasHeater(320, 150);
 
-    initHaLow();
-    initRTC();
+}
 
+void initMQTT() {
     client.setServer(mqtt_server, mqtt_port);
     client.setCallback(mqttCallback);
+}
 
-    sensorQueue = xQueueCreate(10, sizeof(SensorMessage));
-
+void createTasks() {
     xTaskCreatePinnedToCore(mqttLoop, "MQTTTask", 8192, NULL, 1, &mqttTaskHandle, 1);
     xTaskCreatePinnedToCore(deviceInfoTask, "DeviceInfoTask", 4096, NULL, 1, &deviceInfoTaskHandle, 0);
     xTaskCreatePinnedToCore(scd40Task, "SCD40Task", 4096, NULL, 1, &scd40TaskHandle, 0);
     xTaskCreatePinnedToCore(bme680Task, "BME680Task", 4096, NULL, 1, &bme680TaskHandle, 0);
     xTaskCreatePinnedToCore(sensorPublishTask, "SensorPublishTask", 4096, NULL, 1, &sensorPublishTaskHandle, 0);
+    xTaskCreatePinnedToCore(mqTask, "MQTask", 4096, NULL, 1, &mqTaskHandle, 0);
+}
+
+void setup() {
+    Serial.begin(115200);
+    randomSeed(micros());
+
+    initI2CDevices();
+    initHaLow();
+    initRTC();
+    initMQTT();
+
+    sensorQueue = xQueueCreate(10, sizeof(SensorMessage));
+    createTasks();
 }
 
 void loop() {}
