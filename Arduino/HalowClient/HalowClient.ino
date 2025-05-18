@@ -100,6 +100,39 @@ void mqTask(void* pvParameters) {
     }
 }
 
+void sen55Task(void* pvParameters) {
+    while (true) {
+        SensorMessage msg;
+        msg.type = SENSOR_SEN55;
+
+        float pm1p0, pm2p5, pm4p0, pm10p0;
+        float humidity, temperature, vocIndex, noxIndex;
+
+        uint16_t error = sen5x.readMeasuredValues(
+            pm1p0, pm2p5, pm4p0, pm10p0,
+            humidity, temperature, vocIndex, noxIndex
+        );
+
+        if (error == 0) {
+            msg.data.pm1p0      = pm1p0;
+            msg.data.pm2p5      = pm2p5;
+            msg.data.pm4p0      = pm4p0;
+            msg.data.pm10p0     = pm10p0;
+            msg.data.humidity   = humidity;
+            msg.data.temperature= temperature;
+            msg.data.voc_index  = vocIndex;
+            msg.data.nox_index  = noxIndex;
+
+            xQueueSend(sensorQueue, &msg, portMAX_DELAY);
+        } else {
+            Serial.print("❌ Failed to read SEN55 values. Error: ");
+            Serial.println(error);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));  // 2s delay
+    }
+}
+
 // ===== MQTT Callback & Reconnect =====
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (strcmp(topic, mqtt_topic_ota_start) == 0) {
@@ -160,21 +193,34 @@ void reconnectMQTT() {
 }
 
 void mqttLoop(void* pvParameters) {
+    String msgToSend;
+
     while (true) {
         client.loop();
-        if (!client.connected() && !ota_in_progress) reconnectMQTT();
+
+        if (!client.connected() && !ota_in_progress) {
+            reconnectMQTT();
+        }
+
+        if (jsonQueue != NULL && xQueueReceive(jsonQueue, &msgToSend, 0) == pdPASS) {
+            if (client.connected()) {
+                client.publish(mqtt_topic_data, msgToSend.c_str());
+            }
+        }
+
         if (ota_reboot_pending) {
             delay(1000);
             ESP.restart();
         }
+
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
 
-// ===== Sensor Publishing Task (no fusion) =====
+// ===== Sensor Publishing Task  =====
 void sensorPublishTask(void* pvParameters) {
     SensorData combinedData = {};
-    static float wind_speed  = 4.0f, wind_dir = 180.0f;
+    static float wind_speed = 4.0f, wind_dir = 180.0f;
 
     while (true) {
         SensorMessage msg;
@@ -197,25 +243,32 @@ void sensorPublishTask(void* pvParameters) {
                 case SENSOR_MQ:
                     combinedData.co          = msg.data.co;
                     break;
+                case SENSOR_SEN55:
+                    combinedData.pm1p0     = msg.data.pm1p0;
+                    combinedData.pm2p5     = msg.data.pm2p5;
+                    combinedData.pm4p0     = msg.data.pm4p0;
+                    combinedData.pm10p0    = msg.data.pm10p0;
+                    combinedData.voc_index = msg.data.voc_index;
+                    combinedData.nox_index = msg.data.nox_index;
+                    break;
             }
         }
 
-        // — Dummy/random values for wind, rain, etc. —
+        // — Simulated wind, UV, rain —
         float base = WIND_BASE + sin(millis() / 60000.0f) * WIND_VARIATION;
-        float gust = (random(0,10) > 8) ? random(8,14) : 0;
-        wind_speed = constrain(base + random(-10,11)*0.1f + gust, 0.0f, 15.0f);
-        wind_dir  += random(-5, 6);
+        float gust = (random(0, 10) > 8) ? random(8, 14) : 0;
+        wind_speed = constrain(base + random(-10, 11) * 0.1f + gust, 0.0f, 15.0f);
+        wind_dir += random(-5, 6);
         if (wind_dir < 0) wind_dir += 360;
         if (wind_dir >= 360) wind_dir -= 360;
 
-        combinedData.pm25           = PM25_DUMMY_VALUE;
         combinedData.uv             = UV_DUMMY_VALUE;
         combinedData.wind_speed     = wind_speed;
         combinedData.wind_direction = wind_dir;
         combinedData.raindrop       = analogRead(RAINDROP_ANALOG_PIN);
 
-        // — Build & publish JSON —
-        StaticJsonDocument<512> doc;
+        // — Build JSON —
+        StaticJsonDocument<1024> doc;
         doc["node_id"]         = node_id;
         doc["battery_percent"] = combinedData.battery_percent;
         doc["battery_status"]  = combinedData.battery_status;
@@ -225,19 +278,29 @@ void sensorPublishTask(void* pvParameters) {
         doc["humidity"]        = combinedData.humidity;
         doc["pressure"]        = combinedData.pressure;
         doc["iaq"]             = combinedData.iaq;
-        doc["pm25"]            = combinedData.pm25;
+        doc["pm1p0"]           = combinedData.pm1p0;
+        doc["pm2p5"]           = combinedData.pm2p5;
+        doc["pm4p0"]           = combinedData.pm4p0;
+        doc["pm10p0"]          = combinedData.pm10p0;
+        doc["voc_index"]       = combinedData.voc_index;
+        doc["nox_index"]       = combinedData.nox_index;
         doc["uv"]              = combinedData.uv;
         doc["co"]              = combinedData.co;
         doc["wind_speed"]      = combinedData.wind_speed;
         doc["wind_direction"]  = combinedData.wind_direction;
         doc["raindrop"]        = combinedData.raindrop;
 
+        // — Serialize and enqueue —
         String json;
         serializeJson(doc, json);
 
-        if (client.connected()) {
-            client.publish(mqtt_topic_data, json.c_str());
-            Serial.println("✅ Packet Sent!");
+        if (jsonQueue != NULL) {
+            String copy = json;  // Make a copy for queue storage
+            if (xQueueSend(jsonQueue, &copy, pdMS_TO_TICKS(100)) != pdPASS) {
+                Serial.println("Failed to enqueue JSON for publish");
+            } else {
+                Serial.println("JSON enqueued for MQTT");
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(STATUS_INTERVAL));
@@ -260,6 +323,8 @@ void initHaLow() {
 // ===== Arduino Setup & Loop =====
 void initI2CDevices() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+
+    // --- SCD4x Setup ---
     scd4x.begin(Wire, 0x62);
     delay(30);
     scd4x.wakeUp();
@@ -267,6 +332,7 @@ void initI2CDevices() {
     scd4x.reinit();
     scd4x.startPeriodicMeasurement();
 
+    // --- BME680 Setup ---
     bme.begin();
     bme.setTemperatureOversampling(BME680_OS_8X);
     bme.setHumidityOversampling(BME680_OS_2X);
@@ -274,19 +340,34 @@ void initI2CDevices() {
     bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
     bme.setGasHeater(320, 150);
 
+    // --- SEN55 Setup ---
+    sen5x.begin(Wire);
+    uint16_t error;
+    char errorMessage[256];
+
+    error = sen5x.deviceReset();
+    delay(100);
+    if (error) {
+        Serial.print("❌ SEN55 reset failed: ");
+        Serial.println(error);
+    }
+
+    sen5x.startMeasurement();
 }
 
 void initMQTT() {
     client.setServer(mqtt_server, mqtt_port);
     client.setCallback(mqttCallback);
+    client.setBufferSize(2048);
 }
 
 void createTasks() {
     xTaskCreatePinnedToCore(mqttLoop, "MQTTTask", 8192, NULL, 1, &mqttTaskHandle, 1);
+    xTaskCreatePinnedToCore(sensorPublishTask, "SensorPublishTask", 4096, NULL, 1, &sensorPublishTaskHandle, 0);
     xTaskCreatePinnedToCore(deviceInfoTask, "DeviceInfoTask", 4096, NULL, 1, &deviceInfoTaskHandle, 0);
     xTaskCreatePinnedToCore(scd40Task, "SCD40Task", 4096, NULL, 1, &scd40TaskHandle, 0);
     xTaskCreatePinnedToCore(bme680Task, "BME680Task", 4096, NULL, 1, &bme680TaskHandle, 0);
-    xTaskCreatePinnedToCore(sensorPublishTask, "SensorPublishTask", 4096, NULL, 1, &sensorPublishTaskHandle, 0);
+    xTaskCreatePinnedToCore(sen55Task, "SEN55Task", 4096, NULL, 1, &sen55TaskHandle, 0);
     xTaskCreatePinnedToCore(mqTask, "MQTask", 4096, NULL, 1, &mqTaskHandle, 0);
 }
 
@@ -300,7 +381,9 @@ void setup() {
     initMQTT();
 
     sensorQueue = xQueueCreate(10, sizeof(SensorMessage));
-    createTasks();
+    jsonQueue = xQueueCreate(5, sizeof(String));    
+
+    createTasks();  
 }
 
 void loop() {}

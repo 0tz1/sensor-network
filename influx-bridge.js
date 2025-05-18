@@ -19,17 +19,32 @@ mqttClient.on('connect', () => {
 mqttClient.on('message', async (topic, message) => {
   try {
     const data = JSON.parse(message.toString());
+    console.log("📥 Incoming JSON:", data);
 
-    // Convert JSON to InfluxDB Line Protocol
-    const line = `environment,node_id=${data.node_id} ` +
-        `temperature=${data.temperature},humidity=${data.humidity},` +
-        `co2=${data.co2},pm25=${data.pm25},uv=${data.uv},wifi=${data.wifi},` +
-        `wind_speed=${data.wind_speed},wind_direction=${data.wind_direction},` +
-        `co=${data.co},raindrop=${data.raindrop},` +
-        `battery_percent=${data.battery_percent},battery_status=${data.battery_status},` +
-        `pressure=${data.pressure},iaq=${data.iaq}`;
+    const tags = `environment,node_id=${data.node_id}`;
+    let fields = [];
 
-    // Send to InfluxDB
+    // Include all known fields if present
+    const possibleFields = [
+      'temperature', 'humidity', 'co2',
+      'pm1p0', 'pm2p5', 'pm4p0', 'pm10p0', 'voc_index', 'nox_index',
+      'uv', 'wifi', 'wind_speed', 'wind_direction', 'co', 'raindrop',
+      'battery_percent', 'battery_status', 'pressure', 'iaq'
+    ];
+
+    possibleFields.forEach(field => {
+      if (typeof data[field] !== 'undefined') {
+        fields.push(`${field}=${data[field]}`);
+      }
+    });
+
+    if (fields.length === 0) {
+      console.warn("⚠️ No valid fields to send to InfluxDB. Skipping...");
+      return;
+    }
+
+    const line = `${tags} ${fields.join(',')}`;
+
     await axios.post(INFLUX_URL, line, {
       headers: {
         'Authorization': `Token ${INFLUX_TOKEN}`,
@@ -40,5 +55,6 @@ mqttClient.on('message', async (topic, message) => {
     console.log('✅ Wrote to InfluxDB:', line);
   } catch (err) {
     console.error('❌ Error processing message:', err.message);
+    console.error('⚠️  Raw MQTT message:', message.toString());
   }
 });

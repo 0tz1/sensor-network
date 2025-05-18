@@ -8,7 +8,7 @@ const TOPIC_START  = 'sensor/ota/start';
 const TOPIC_CHUNK  = 'sensor/ota/chunk';
 const TOPIC_DONE   = 'sensor/ota/done';
 const FILE_PATH    = '/Users/ceylan/Library/Caches/arduino/sketches/9216BF5B202591106F2E159A1E328B7E/HalowClient.ino.bin';
-const CHUNK_SIZE   = 128;
+const CHUNK_SIZE   = 1024;
 const CHUNK_DELAY  = 10; // ms
 
 // === MQTT SETUP ===

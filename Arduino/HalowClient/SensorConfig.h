@@ -11,17 +11,17 @@
 #include <WebServer.h>
 #include <PubSubClient.h>
 #include <SensirionI2cScd4x.h>
+#include <SensirionI2CSen5x.h>
 #include <Adafruit_BME680.h>
 
 // ===== Pins =====
 #define BATTERY_ADC_PIN 1
-#define CHARGING_STATUS_PIN 15
+#define CHARGING_STATUS_PIN 17
 #define MQ_PIN 10
 #define I2C_SDA_PIN 15
 #define I2C_SCL_PIN 16
 
 // ===== Dummy Data Constants =====
-#define PM25_DUMMY_VALUE    45
 #define UV_DUMMY_VALUE      5.2
 #define WIND_BASE           3.0
 #define WIND_VARIATION      1.5
@@ -47,7 +47,6 @@ struct SensorData {
     float temperature = 0.0;
     float humidity = 0.0;
     float co2 = 0.0;
-    float pm25 = 0.0;
     float uv = 0.0;
     float pressure = 0.0;
     float iaq = 0.0;
@@ -58,13 +57,21 @@ struct SensorData {
     int battery_status = 0;
     int raindrop = 0;
     int wifi_strength = 0;
+    
+    float pm1p0;
+    float pm2p5;
+    float pm4p0;
+    float pm10p0;
+    float voc_index;
+    float nox_index;
 };
 
 enum SensorType {
     SENSOR_DEVICE_INFO,
     SENSOR_SCD40,
     SENSOR_BME680,
-    SENSOR_MQ
+    SENSOR_MQ,
+    SENSOR_SEN55
 };
 
 struct SensorMessage {
