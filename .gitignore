@@ -27,3 +27,4 @@
 .env
 *.local
 
+/iot_gui/venv/

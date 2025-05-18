@@ -1,5 +1,6 @@
 #include "SensorConfig.h"
 #include "SensorGlobal.h"
+#include "SensorTypes.h"
 
 const int node_id = 1;
 

@@ -33,6 +33,17 @@ services:
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
 
+  nodered:
+    image: nodered/node-red:latest
+    container_name: nodered
+    ports:
+      - "1880:1880"
+    volumes:
+      - nodered-data:/data
+    restart: unless-stopped
+    depends_on:
+      - mqtt
+
 volumes:
   influxdb-data:
     external: true
@@ -41,3 +52,6 @@ volumes:
   grafana-data:
     external: true
     name: iot_dashboard_grafana_data
+
+  nodered-data:
+    external: false

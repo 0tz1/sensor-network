@@ -21,6 +21,7 @@ client.on('connect', async () => {
         console.log('🎉 OTA complete!');
     } catch (err) {
         console.error('❌ OTA failed:', err.message);
+        console.log("OTA_FINISHED");
     } finally {
         client.end();
     }
