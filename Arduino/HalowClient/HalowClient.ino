@@ -4,27 +4,13 @@
 
 const int node_id = 1;
 
-// ======= RTC Init =======
-void initRTC() {
-    struct tm t = { 0 };
-    t.tm_year = 2025 - 1900;
-    t.tm_mon  = 3  - 1;
-    t.tm_mday = 26;
-    t.tm_hour = 14;
-    t.tm_min  = 30;
-    t.tm_sec  = 0;
-    time_t now = mktime(&t);
-    struct timeval now_val = { .tv_sec = now };
-    settimeofday(&now_val, NULL);
-}
-
 // ===== Battery Functions =====
 float readBatteryVoltageSmoothed() {
     const int samples = 10;
     long total = 0;
     for (int i = 0; i < samples; i++) {
         total += analogRead(BATTERY_ADC_PIN);
-        delay(5);
+        delay(1);
     }
     float avg = float(total) / samples;
     float v   = (avg / 4095.0f) * 3.3f;
@@ -194,7 +180,7 @@ void reconnectMQTT() {
 }
 
 void mqttLoop(void* pvParameters) {
-    String msgToSend;
+    String* jsonPtr;
 
     while (true) {
         client.loop();
@@ -203,15 +189,19 @@ void mqttLoop(void* pvParameters) {
             reconnectMQTT();
         }
 
-        if (jsonQueue != NULL && xQueueReceive(jsonQueue, &msgToSend, 0) == pdPASS) {
+        if (jsonQueue != NULL && xQueueReceive(jsonQueue, &jsonPtr, 0) == pdPASS) {
             if (client.connected()) {
-                client.publish(mqtt_topic_data, msgToSend.c_str());
+                client.publish(mqtt_topic_data, jsonPtr->c_str());
             }
+            delete jsonPtr;
         }
 
         if (ota_reboot_pending) {
-            delay(1000);
-            ESP.restart();
+            static unsigned long rebootStart = 0;
+            if (rebootStart == 0) rebootStart = millis();
+            if (millis() - rebootStart > 1000) {
+                ESP.restart();
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(1));
@@ -290,17 +280,18 @@ void sensorPublishTask(void* pvParameters) {
         doc["wind_speed"]      = combinedData.wind_speed;
         doc["wind_direction"]  = combinedData.wind_direction;
         doc["raindrop"]        = combinedData.raindrop;
+        doc["ota"]             = (ota_in_progress || ota_reboot_pending) ? 1 : 0;  // OTA flag
 
         // — Serialize and enqueue —
-        String json;
-        serializeJson(doc, json);
+        String* jsonPtr = new String();
+        serializeJson(doc, *jsonPtr);
 
         if (jsonQueue != NULL) {
-            String copy = json;  // Make a copy for queue storage
-            if (xQueueSend(jsonQueue, &copy, pdMS_TO_TICKS(100)) != pdPASS) {
-                Serial.println("Failed to enqueue JSON for publish");
+            if (xQueueSend(jsonQueue, &jsonPtr, pdMS_TO_TICKS(100)) != pdPASS) {
+                Serial.println("❌ Failed to enqueue JSON for publish");
+                delete jsonPtr;
             } else {
-                Serial.println("JSON enqueued for MQTT");
+                Serial.println("✅ JSON enqueued for MQTT");
             }
         }
 
@@ -378,7 +369,6 @@ void setup() {
 
     initI2CDevices();
     initHaLow();
-    initRTC();
     initMQTT();
 
     sensorQueue = xQueueCreate(10, sizeof(SensorMessage));

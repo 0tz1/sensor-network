@@ -15,6 +15,7 @@ struct SensorData {
     int battery_status = 0;
     int raindrop = 0;
     int wifi_strength = 0;
+    int ota = 0;
     
     float pm1p0;
     float pm2p5;
